@@ -4,8 +4,7 @@ from datetime import timedelta as td
 import socket
 import sys
 import struct
-# pip3 install salsa20
-from salsa20 import Salsa20_xor
+from Crypto.Cipher import Salsa20
 
 # ansi prefix
 pref = "\033["
@@ -51,7 +50,10 @@ def salsa20_dec(dat):
 	IV = bytearray()
 	IV.extend(iv2.to_bytes(4, 'little'))
 	IV.extend(iv1.to_bytes(4, 'little'))
-	ddata = Salsa20_xor(dat, bytes(IV), KEY[0:32])
+	
+	cipher = Salsa20.new(key=KEY[0:32], nonce=bytes(IV))
+	ddata = cipher.decrypt(dat)
+	
 	magic = int.from_bytes(ddata[0:4], byteorder='little')
 	if magic != 0x47375330:
 		return bytearray(b'')

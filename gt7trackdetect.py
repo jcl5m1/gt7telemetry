@@ -1,8 +1,7 @@
 import time
 import sys
 import csv
-from granturismo.intake import Listener
-from granturismo.model import Wheels
+from gt_telem.turismo_client import TurismoClient
 
 # ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 
@@ -181,7 +180,7 @@ if __name__ == "__main__":
 	# Load the track bounds from the CSV file
 	track_bounds = load_track_bounds('gt7trackdetect.csv')
 
-	prevLap = -1
+	prevLap = 1
 	maxX = -999999.9
 	maxY = -999999.9
 	minX = 999999.9
@@ -192,53 +191,47 @@ if __name__ == "__main__":
 
 		ip_address = sys.argv[1]
 
-		# To use the Listener session without a `with` clause, you'll need to call the `.start()` function.
-		listener = Listener(ip_address)
-		listener.start()
+		client = TurismoClient(ps_ip=ip_address)
+		client.start()
 
 		while True:
-			packet = listener.get()
-			if packet.flags.loading_or_processing:
+			telemetry = client.telemetry
+			if telemetry is None or any([telemetry.is_loading, telemetry.is_paused, telemetry.current_lap < 1]):
+				time.sleep(1)
 				continue
-			if packet.flags.paused:
-				continue
-			if packet.lap_count is None:
-				continue
-
 			try:
-				if packet.flags.car_on_track and gotTrack == -1:
+				if telemetry.cars_on_track and gotTrack == -1:
+					newXYZ = [telemetry.position.x, telemetry.position.z]
+					if telemetry.position.x > maxX:
+						maxX = telemetry.position.x
+					if telemetry.position.x < minX:
+						minX = telemetry.position.x
+					if telemetry.position.z > maxY:
+						maxY = telemetry.position.z
+					if telemetry.position.z < minY:
+						minY = telemetry.position.z
 
-					newXYZ = [packet.position.x, packet.position.z]
-
-					if packet.lap_count > 0:
-						if packet.position.x > maxX:
-							maxX = packet.position.x
-						if packet.position.x < minX:
-							minX = packet.position.x
-						if packet.position.z > maxY:
-							maxY = packet.position.z
-						if packet.position.z < minY:
-							minY = packet.position.z
-
-					if packet.lap_count > prevLap:
-						prevLap = packet.lap_count
-						if prevLap > 1:
-							matches = find_matching_track(oldXYZ[0], oldXYZ[1], newXYZ[0], newXYZ[1], minX, minY, maxX, maxY, track_bounds)
-							if matches:
-								if len(matches) == 1:
-									if matches[0][0] > 0.96:
-										print(f"Got a +96% match: {matches[0][1]} ({round(matches[0][0] * 100, 1)}%)")
-										gotTrack = matches[0][1]
-									else:
-										print(f"Got a possible match: {matches[0][1]} ({round(matches[0][0] * 100, 1)}%)")
+					if telemetry.current_lap > prevLap:
+						prevLap = telemetry.current_lap
+						matches = find_matching_track(oldXYZ[0], oldXYZ[1], newXYZ[0], newXYZ[1], minX, minY, maxX, maxY, track_bounds)
+						if matches:
+							if len(matches) == 1:
+								match = matches[0]
+								probability, track_id = match[0], match[1]
+								probability_percentage = round(probability * 100, 1)
+								if probability_percentage > 96:
+									gotTrack = track_id
+									print(f"Got a +96% match: {track_id} ({probability_percentage}%)")
 								else:
-									print(f"Got {len(matches)} track matches")
+									print(f"Got a possible match: {track_id} ({probability_percentage}%)")
+							else:
+								print(f"Got {len(matches)} track matches")
 
 					oldXYZ = newXYZ
 
-				if packet.lap_count < prevLap:
+				if telemetry.current_lap < prevLap:
 					print("Resetting track capture")
-					prevLap = -1
+					prevLap = 1
 					maxX = -999999.9
 					maxY = -999999.9
 					minX = 999999.9
@@ -251,4 +244,4 @@ if __name__ == "__main__":
 				break
 
 	finally:
-		listener.close()
+		client.stop()
