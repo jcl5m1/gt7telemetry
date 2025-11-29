@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GT7 Telemetry Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Courier New', Consolas, Monaco, monospace;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            gap: 20px;
+        }
+        
+        .header-left {
+            flex-shrink: 0;
+        }
+        
+        .header-right {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            flex-grow: 1;
+        }
+        
+        h1 {
+            margin: 0;
+            font-size: 2em;
+            color: #00ff00;
+            white-space: nowrap;
+        }
+        
+        .lap-time {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #ffff00;
+            margin: 0;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .lap-info {
+            font-size: 1.1em;
+            color: #cccccc;
+            margin-top: 5px;
+        }
+        
+        .plots-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .plot-container {
+            background-color: #2a2a2a;
+            border-radius: 5px;
+            padding: 5px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        .left-plots {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .right-plot {
+            display: flex;
+            align-items: stretch;
+        }
+        
+        .status {
+            text-align: left;
+            padding: 5px 10px;
+            background-color: #2a2a2a;
+            border-radius: 5px;
+            margin-top: 5px;
+            font-size: 0.9em;
+        }
+        
+        .connected {
+            color: #00ff00;
+        }
+        
+        .disconnected {
+            color: #ff0000;
+        }
+        
+        .clear-button {
+            background-color: #ff4444;
+            color: #ffffff;
+            border: none;
+            padding: 8px 16px;
+            font-size: 0.9em;
+            font-family: 'Courier New', Consolas, Monaco, monospace;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 5px;
+            transition: background-color 0.2s;
+        }
+        
+        .clear-button:hover {
+            background-color: #ff6666;
+        }
+        
+        .clear-button:active {
+            background-color: #cc0000;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <h1>🏎️ GT7 Telemetry Dashboard</h1>
+            <div class="status">
+                Status: <span id="connectionStatus" class="disconnected">Disconnected</span>
+            </div>
+            <button class="clear-button" onclick="clearAllData()">Clear Plot History</button>
+        </div>
+        <div class="header-right">
+            <div class="lap-time" id="lapTime">0:00.000</div>
+            <div class="lap-info">
+                <span>Lap: <span id="currentLap">0</span></span> | 
+                <span>Speed: <span id="speedDisplay">0</span> mph</span> |
+                <span>Gear: <span id="gearDisplay">N</span></span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="plots-container">
+        <div class="left-plots">
+            <div class="plot-container">
+                <div id="throttleBrakePlot"></div>
+            </div>
+            <div class="plot-container">
+                <div id="speedRpmPlot"></div>
+            </div>
+            <div class="plot-container">
+                <div id="angularVelocityPlot"></div>
+            </div>
+        </div>
+        <div class="right-plot">
+            <div class="plot-container" style="width: 100%;">
+                <div id="positionPlot"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ========================================
+        // REAL-TIME TELEMETRY DASHBOARD
+        // ========================================
+        
+        const socket = io();
+        
+        // Configuration
+        const CONFIG = {
+            maxDataPoints: 2000,     // Maximum data points to store (enough for 30+ seconds at high frequency)
+            windowSize: 30,          // Show last 30 seconds on x-axis
+            updateInterval: 50       // Update plots every 50ms for smooth real-time updates
+        };
+        
+        // Data buffers for real-time plotting
+        const liveData = {
+            time: [],
+            throttle: [],
+            brake: [],
+            speed: [],
+            rpm: [],
+            accelSway: [],
+            accelHeave: [],
+            accelSurge: []
+        };
+        
+        // State management
+        let state = {
+            startTime: Date.now(),
+            previousLap: -1,
+            lastUpdateTime: 0
+        };
+        
+        // ========================================
+        // PLOT INITIALIZATION
+        // ========================================
+        
+        // Common plot styling
+        const commonLayout = {
+            plot_bgcolor: '#1a1a1a',
+            paper_bgcolor: '#2a2a2a',
+            font: { color: '#ffffff' },
+            margin: { t: 35, r: 50, b: 40, l: 50 },
+            height: 200,
+            showlegend: true,
+            legend: {
+                font: { size: 10 },
+                bgcolor: 'rgba(42, 42, 42, 0.8)',
+                x: 0,
+                y: 0,
+                xanchor: 'left',
+                yanchor: 'bottom'
+            }
+        };
+        
+        const commonXAxis = {
+            title: '',
+            color: '#ffffff',
+            gridcolor: '#444444',
+            range: [0, CONFIG.windowSize],
+            fixedrange: false
+        };
+        
+        // Initialize Throttle & Brake Plot
+        function initThrottleBrakePlot() {
+            const layout = {
+                ...commonLayout,
+                title: { text: 'Throttle & Brake', font: { size: 14 } },
+                xaxis: { ...commonXAxis },
+                yaxis: {
+                    title: 'Percentage (%)',
+                    color: '#ffffff',
+                    gridcolor: '#444444',
+                    range: [0, 100],
+                    fixedrange: true
+                }
+            };
+            
+            const traces = [
+                {
+                    x: [],
+                    y: [],
+                    name: 'Throttle',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#00ff00', width: 2 },
+                    fill: 'tozeroy',
+                    fillcolor: 'rgba(0, 255, 0, 0.15)'
+                },
+                {
+                    x: [],
+                    y: [],
+                    name: 'Brake',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#ff0000', width: 2 },
+                    fill: 'tozeroy',
+                    fillcolor: 'rgba(255, 0, 0, 0.15)'
+                }
+            ];
+            
+            Plotly.newPlot('throttleBrakePlot', traces, layout, { responsive: true });
+        }
+        
+        // Initialize Speed & RPM Plot
+        function initSpeedRpmPlot() {
+            const layout = {
+                ...commonLayout,
+                title: { text: 'Speed & RPM', font: { size: 14 } },
+                xaxis: { ...commonXAxis },
+                yaxis: {
+                    title: 'Speed (mph)',
+                    color: '#00ffff',
+                    gridcolor: '#444444',
+                    range: [0, 200],
+                    fixedrange: true
+                },
+                yaxis2: {
+                    title: 'RPM',
+                    overlaying: 'y',
+                    side: 'right',
+                    color: '#ffff00',
+                    gridcolor: '#444444',
+                    range: [0, 10000],
+                    fixedrange: true
+                }
+            };
+            
+            const traces = [
+                {
+                    x: [],
+                    y: [],
+                    name: 'Speed',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#00ffff', width: 2 }
+                },
+                {
+                    x: [],
+                    y: [],
+                    name: 'RPM',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#ffff00', width: 2 },
+                    yaxis: 'y2'
+                }
+            ];
+            
+            Plotly.newPlot('speedRpmPlot', traces, layout, { responsive: true });
+        }
+        
+        // Initialize Acceleration Plot
+        function initAngularVelocityPlot() {
+            const layout = {
+                ...commonLayout,
+                title: { text: 'Acceleration (Sway/Heave/Surge)', font: { size: 14 } },
+                xaxis: { ...commonXAxis },
+                yaxis: {
+                    title: 'Acceleration (m/s²)',
+                    color: '#ffffff',
+                    gridcolor: '#444444',
+                    range: [-20, 20],
+                    fixedrange: true
+                }
+            };
+            
+            const traces = [
+                {
+                    x: [],
+                    y: [],
+                    name: 'Sway (Lateral)',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#ff00ff', width: 2 }
+                },
+                {
+                    x: [],
+                    y: [],
+                    name: 'Heave (Vertical)',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#00ffaa', width: 2 }
+                },
+                {
+                    x: [],
+                    y: [],
+                    name: 'Surge (Longitudinal)',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#ffaa00', width: 2 }
+                }
+            ];
+            
+            Plotly.newPlot('angularVelocityPlot', traces, layout, { responsive: true });
+        }
+        
+        // Initialize Position Plot (kept as spatial data)
+        function initPositionPlot() {
+            const layout = {
+                title: { text: 'Track Position (XZ)', font: { color: '#ffffff', size: 14 } },
+                plot_bgcolor: '#1a1a1a',
+                paper_bgcolor: '#2a2a2a',
+                xaxis: {
+                    title: 'X (m)',
+                    color: '#ffffff',
+                    gridcolor: '#444444',
+                    scaleanchor: 'y',
+                    scaleratio: 1
+                },
+                yaxis: {
+                    title: 'Z (m)',
+                    color: '#ffffff',
+                    gridcolor: '#444444'
+                },
+                showlegend: true,
+                legend: {
+                    font: { color: '#ffffff', size: 10 },
+                    bgcolor: 'rgba(42, 42, 42, 0.8)',
+                    x: 0,
+                    y: 0,
+                    xanchor: 'left',
+                    yanchor: 'bottom'
+                },
+                margin: { t: 35, r: 10, b: 40, l: 50 }
+            };
+            
+            const traces = [
+                {
+                    x: [],
+                    y: [],
+                    name: 'Track Path',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#ffff00', width: 2 }
+                },
+                {
+                    x: [],
+                    y: [],
+                    name: 'Current Position',
+                    type: 'scatter',
+                    mode: 'markers',
+                    marker: { color: '#ff0000', size: 12, symbol: 'circle' }
+                },
+                {
+                    x: [],
+                    y: [],
+                    name: 'Velocity Vector',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { color: '#00ff00', width: 3 },
+                    showlegend: false
+                }
+            ];
+            
+            Plotly.newPlot('positionPlot', traces, layout, { responsive: true });
+        }
+        
+        // ========================================
+        // DATA MANAGEMENT
+        // ========================================
+        
+        function addDataPoint(data) {
+            const currentTime = (Date.now() - state.startTime) / 1000;
+            
+            // Add new data points
+            liveData.time.push(currentTime);
+            liveData.throttle.push(data.throttle);
+            liveData.brake.push(data.brake);
+            liveData.speed.push(data.speed);
+            liveData.rpm.push(data.rpm);
+            liveData.accelSway.push(data.accel_sway || 0);
+            liveData.accelHeave.push(data.accel_heave || 0);
+            liveData.accelSurge.push(data.accel_surge || 0);
+            
+            // Trim old data to prevent memory bloat
+            if (liveData.time.length > CONFIG.maxDataPoints) {
+                const removeCount = liveData.time.length - CONFIG.maxDataPoints;
+                liveData.time.splice(0, removeCount);
+                liveData.throttle.splice(0, removeCount);
+                liveData.brake.splice(0, removeCount);
+                liveData.speed.splice(0, removeCount);
+                liveData.rpm.splice(0, removeCount);
+                liveData.accelSway.splice(0, removeCount);
+                liveData.accelHeave.splice(0, removeCount);
+                liveData.accelSurge.splice(0, removeCount);
+            }
+        }
+        
+        function clearAllData() {
+            liveData.time = [];
+            liveData.throttle = [];
+            liveData.brake = [];
+            liveData.speed = [];
+            liveData.rpm = [];
+            liveData.accelSway = [];
+            liveData.accelHeave = [];
+            liveData.accelSurge = [];
+            state.startTime = Date.now();
+            
+            // Clear the position plot as well
+            Plotly.update('positionPlot',
+                {
+                    x: [[], [], []],
+                    y: [[], [], []]
+                },
+                {},
+                [0, 1, 2]
+            );
+            
+            // Emit event to backend to clear position history
+            socket.emit('clear_history');
+            console.log('🗑️ All plot history cleared');
+        }
+        
+        // ========================================
+        // REAL-TIME PLOT UPDATES
+        // ========================================
+        
+        function updateLinePlots() {
+            const now = Date.now();
+            
+            // Throttle updates for performance
+            if (now - state.lastUpdateTime < CONFIG.updateInterval) {
+                return;
+            }
+            state.lastUpdateTime = now;
+            
+            if (liveData.time.length === 0) {
+                return;
+            }
+            
+            // Calculate rolling window range
+            const currentTime = liveData.time[liveData.time.length - 1];
+            const xMin = Math.max(0, currentTime - CONFIG.windowSize);
+            const xMax = Math.max(CONFIG.windowSize, currentTime);
+            
+            // Update Throttle & Brake
+            Plotly.update('throttleBrakePlot',
+                {
+                    x: [liveData.time, liveData.time],
+                    y: [liveData.throttle, liveData.brake]
+                },
+                {
+                    'xaxis.range': [xMin, xMax]
+                }
+            );
+            
+            // Update Speed & RPM
+            Plotly.update('speedRpmPlot',
+                {
+                    x: [liveData.time, liveData.time],
+                    y: [liveData.speed, liveData.rpm]
+                },
+                {
+                    'xaxis.range': [xMin, xMax]
+                }
+            );
+            
+            // Update Acceleration
+            Plotly.update('angularVelocityPlot',
+                {
+                    x: [liveData.time, liveData.time, liveData.time],
+                    y: [liveData.accelSway, liveData.accelHeave, liveData.accelSurge]
+                },
+                {
+                    'xaxis.range': [xMin, xMax]
+                }
+            );
+        }
+        
+        function updatePositionPlot(data) {
+            const historyX = data.position_history.map(p => p.x);
+            const historyY = data.position_history.map(p => p.y);
+            
+            // Calculate velocity vector for visualization
+            const velocityScale = 5;
+            const velocityEndX = data.position_x + data.velocity_x * velocityScale;
+            const velocityEndY = -data.position_z + (-data.velocity_z) * velocityScale;
+            
+            Plotly.update('positionPlot',
+                {
+                    x: [historyX, [data.position_x], [data.position_x, velocityEndX]],
+                    y: [historyY, [-data.position_z], [-data.position_z, velocityEndY]]
+                },
+                {},
+                [0, 1, 2]
+            );
+        }
+        
+        // ========================================
+        // SOCKET.IO EVENT HANDLERS
+        // ========================================
+        
+        socket.on('connect', () => {
+            document.getElementById('connectionStatus').textContent = 'Connected';
+            document.getElementById('connectionStatus').className = 'connected';
+            console.log('✓ Connected to telemetry server');
+        });
+        
+        socket.on('disconnect', () => {
+            document.getElementById('connectionStatus').textContent = 'Disconnected';
+            document.getElementById('connectionStatus').className = 'disconnected';
+            console.log('✗ Disconnected from telemetry server');
+        });
+        
+        socket.on('telemetry_update', (data) => {
+            // Update display values
+            document.getElementById('lapTime').textContent = data.lap_time;
+            document.getElementById('currentLap').textContent = data.current_lap;
+            document.getElementById('speedDisplay').textContent = Number(data.speed).toFixed(1).padStart(5, '0');
+            document.getElementById('gearDisplay').textContent = data.gear;
+            
+            // Detect lap transition to lap 1 from any other lap (race start/restart)
+            if (data.current_lap === 1 && state.previousLap !== 1) {
+                clearAllData();
+                console.log('🏁 Lap 1 started - all data cleared');
+            }
+            
+            // Update previous lap tracker
+            state.previousLap = data.current_lap;
+            
+            // Process telemetry data only when actively racing (lap > 0)
+            if (data.current_lap > 0) {
+                addDataPoint(data);
+                updateLinePlots();
+                updatePositionPlot(data);
+            }
+        });
+        
+        // ========================================
+        // INITIALIZATION
+        // ========================================
+        
+        // Initialize all plots on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('🏎️ Initializing GT7 Telemetry Dashboard...');
+            initThrottleBrakePlot();
+            initSpeedRpmPlot();
+            initAngularVelocityPlot();
+            initPositionPlot();
+            console.log('✓ All plots initialized and ready for live data');
+        });
+    </script>
+</body>
+</html>
