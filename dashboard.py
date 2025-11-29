@@ -121,6 +121,10 @@ def telemetry_receiver():
                 
                 curlap = struct.unpack('h', ddata[0x74:0x74+2])[0]
                 
+                # Extract race position data
+                current_position = struct.unpack('h', ddata[0x84:0x84+2])[0]
+                total_positions = struct.unpack('h', ddata[0x86:0x86+2])[0]
+                
                 # Calculate lap time and handle lap transitions
                 if curlap > 0:
                     dt_now = dt.now()
@@ -166,6 +170,8 @@ def telemetry_receiver():
                     'accel_surge': round(accel_surge, 3),
                     'lap_time': lap_time,
                     'current_lap': curlap,
+                    'current_position': current_position,
+                    'total_positions': total_positions,
                     'position_history': list(position_history)
                 }
                 

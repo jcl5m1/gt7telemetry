@@ -97,26 +97,6 @@
             color: #ff0000;
         }
         
-        .clear-button {
-            background-color: #ff4444;
-            color: #ffffff;
-            border: none;
-            padding: 8px 16px;
-            font-size: 0.9em;
-            font-family: 'Courier New', Consolas, Monaco, monospace;
-            border-radius: 5px;
-            cursor: pointer;
-            margin-top: 5px;
-            transition: background-color 0.2s;
-        }
-        
-        .clear-button:hover {
-            background-color: #ff6666;
-        }
-        
-        .clear-button:active {
-            background-color: #cc0000;
-        }
     </style>
 </head>
 <body>
@@ -126,12 +106,12 @@
             <div class="status">
                 Status: <span id="connectionStatus" class="disconnected">Disconnected</span>
             </div>
-            <button class="clear-button" onclick="clearAllData()">Clear Plot History</button>
         </div>
         <div class="header-right">
             <div class="lap-time" id="lapTime">0:00.000</div>
             <div class="lap-info">
                 <span>Lap: <span id="currentLap">0</span></span> | 
+                <span>Position: <span id="positionDisplay">0/0</span></span> |
                 <span>Speed: <span id="speedDisplay">0</span> mph</span> |
                 <span>Gear: <span id="gearDisplay">N</span></span>
             </div>
@@ -566,6 +546,7 @@
             // Update display values
             document.getElementById('lapTime').textContent = data.lap_time;
             document.getElementById('currentLap').textContent = data.current_lap;
+            document.getElementById('positionDisplay').textContent = data.current_position + '/' + data.total_positions;
             document.getElementById('speedDisplay').textContent = Number(data.speed).toFixed(1).padStart(5, '0');
             document.getElementById('gearDisplay').textContent = data.gear;
             
