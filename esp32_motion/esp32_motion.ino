@@ -127,12 +127,12 @@ void sendHeartbeat() {
   udp.endPacket();
 }
 
-// Blink LED
+// Blink LED (LED is active-low: LOW=on, HIGH=off)
 void blinkLED(int times, int delayMs) {
   for (int i = 0; i < times; i++) {
-    digitalWrite(LED_BUILTIN, HIGH);
+    digitalWrite(LED_BUILTIN, LOW);   // Turn on
     delay(delayMs);
-    digitalWrite(LED_BUILTIN, LOW);
+    digitalWrite(LED_BUILTIN, HIGH);  // Turn off
     delay(delayMs);
   }
 }
@@ -144,9 +144,9 @@ void setup() {
   Serial.println("\nGT7 Telemetry Motion Data Reader");
   Serial.println("ESP32-C3 Super Mini");
   
-  // Initialize LED
+  // Initialize LED (active-low: LOW=on, HIGH=off)
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
+  digitalWrite(LED_BUILTIN, HIGH);  // Turn off
   
   // Connect to WiFi
   Serial.print("Connecting to WiFi: ");
@@ -173,7 +173,7 @@ void setup() {
   blinkLED(2, 100);
   
   // Turn off LED until GT7 packets are received
-  digitalWrite(LED_BUILTIN, LOW);
+  digitalWrite(LED_BUILTIN, HIGH);
   
   // Print PS4 IP address
   Serial.print("\nPS4 IP Address: ");
@@ -237,8 +237,8 @@ void loop() {
     if (len >= 0x13C) {  // Minimum packet size with acceleration data (316 bytes)
       // Decrypt packet
       if (salsa20_decrypt(packetBuffer, len)) {
-        // Turn on LED when packet is successfully decrypted
-        digitalWrite(LED_BUILTIN, HIGH);
+        // Turn on LED when packet is successfully decrypted (active-low)
+        digitalWrite(LED_BUILTIN, LOW);
         
         lastPacketTime = millis();
         
@@ -257,8 +257,6 @@ void loop() {
         memcpy(&accelSurge, &packetBuffer[0x138], 4);
         
         // Print acceleration values to serial with position and WiFi signal strength
-        Serial.print("Mn:-20,");     // Y-axis minimum
-        Serial.print("Mx:20,");  // Y-axis maximum
         Serial.print("P:");
         Serial.print(currentPosition);
         Serial.print(",");
@@ -275,8 +273,8 @@ void loop() {
         Serial.print(WiFi.RSSI()/10.0, 1);
         Serial.println("");
         
-        // Turn off LED after finishing parsing the packet data
-        digitalWrite(LED_BUILTIN, LOW);
+        // Turn off LED after finishing parsing the packet data (active-low)
+        digitalWrite(LED_BUILTIN, HIGH);
       }
     }
   }
